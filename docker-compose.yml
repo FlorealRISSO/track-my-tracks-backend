@@ -1,0 +1,49 @@
+version: '3.8'
+services:
+  app:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    volumes:
+      - './server:/usr/src/app'
+    environment:
+      - DB_URL=postgres://admin:mypassword@db:5432/dev_db
+      - CLIENT_ID=
+      - CLIENT_SECRET=
+      - FRONTEND_URL=http://localhost:8081
+      - REDIRECT_URI=http://localhost:3000/callback
+
+  db:
+    image: postgres:15  # Use the official PostgreSQL image
+    restart: always
+    environment:
+      POSTGRES_USER: admin # Database user
+      POSTGRES_PASSWORD: mypassword  # Database password
+      POSTGRES_DB: dev_db # Database name
+    ports:
+      - "5433:5432"  # Expose PostgreSQL port
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # Persist data in a named volume
+
+  worker:
+    build:
+      context: ./worker  # Set context to the worker directory
+      dockerfile: Dockerfile  # Specify the Dockerfile for the worker if it's named differently
+    environment:
+      - DB_NAME=dev_db
+      - DB_PORT=5432
+      - DB_USER=admin
+      - DB_HOST=db
+      - DB_PASSWORD=mypassword
+      - CLIENT_ID=
+      - CLIENT_SECRET=
+      - APP_USER_ADMIN=admin
+      - APP_USER_PASSPHRASE=admin
+
+    volumes:
+      - ./worker:/usr/src/app  # Mount the worker directory
+
+volumes:
+  pgdata:
