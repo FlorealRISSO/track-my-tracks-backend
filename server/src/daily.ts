@@ -1,4 +1,4 @@
-import { getUserByKey, getTracksListenedOnDate } from './db';
+import { getTracksListenedOnDate, getUserById } from './db';
 import { msToHM } from './utils';
 
 interface Track {
@@ -52,8 +52,8 @@ const fetchBy50 = async (query: string, ids: string[], token: string) => {
 }
 
 
-const getDailySummary = async (passphrase: string, day: string): Promise<DailySummary | undefined> => {
-    const user = await getUserByKey(passphrase);
+export const getDailySummary = async (id: string, day: string): Promise<DailySummary | undefined> => {
+    const user = await getUserById(id);
     if (!user) return;
 
     const tracks = await getTracksListenedOnDate(user.id, day);
@@ -179,5 +179,3 @@ const getTopGenres = (genreCount: Map<string, number>): { name: string; count: n
 
     return topGenres;
 };
-
-export default getDailySummary;

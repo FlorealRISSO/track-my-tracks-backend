@@ -3,119 +3,75 @@ import cors from 'cors';
 import querystring from 'querystring';
 import * as dotenv from 'dotenv';
 import * as utils from './utils';
-import { addAppUser, deleteAppUser, getAllUsers, getTracksListenedOnDate, getUserByKey, getUserByLogin, getUserByOnlyLogin, udpateUserKey, updateUserToken } from './db';
-import getDailySummary from './daily';
+import { addAppUser, createTables, deleteAppUser, getAllSuperkeys, getAllUsers, getUserById, getUserByOnlyLogin, insertSuperkey, udpateUserPassphrase, updateUserToken, useSuperkey, verifySuperkey } from './db';
+import { getDailySummary } from './daily';
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
+import path from 'path';
 
 dotenv.config();
 const app = express();
 
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI;
-const FRONTEND_URL = process.env.FRONTEND_URL;
+const BACKEND_URL = process.env.BACKEND_URL as string;
+const FRONTEND_URL = process.env.FRONTEND_URL as string;
+const JWT_SECRET = process.env.JWT_SECRET as string;
+const APP_USER_ADMIN = process.env.APP_USER_ADMIN as string
+const APP_USER_PASSPHRASE = process.env.APP_USER_PASSPHRASE as string
 
 const SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize';
 const SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token';
-const SPOTIFY_API_URL = 'https://api.spotify.com/v1';
 const SCOPE = 'user-read-recently-played';
 const PORT = 3000;
 
-console.log('ORIGIN:', FRONTEND_URL);
-
 const REQUESTS = new Map<string, string>();
 
-app.use(cors({ origin: FRONTEND_URL}));
+app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 
 enum AuthState {
     NEEDS_AUTH,
-    AUTHENTICATED,
     READY,
     INVALID,
 }
 
-const verifyLogin = async (login: string, passphrase: string): Promise<AuthState | string> => {
+const verifyLogin = async (login: string, passphrase: string): Promise<[AuthState, string | null, boolean | null]> => {
     if (typeof passphrase !== 'string' || passphrase.length < 1) {
-        return AuthState.INVALID;
+        return [AuthState.INVALID, null, null];
     }
 
     if (typeof login !== 'string' || login.length < 1) {
-        return AuthState.INVALID;
+        return [AuthState.INVALID, null, null];
     }
 
-    const filteredPass = utils.filterNonAlphanumeric(passphrase);
-    if (filteredPass !== passphrase) {
-        return AuthState.INVALID;
-    }
-
-    const filteredLogin = utils.filterNonAlphanumeric(login);
-    if (filteredLogin !== login) {
-        return AuthState.INVALID
-    }
-
-    const user = await getUserByLogin(login, passphrase);
+    const user = await getUserByOnlyLogin(login);
     if (!user) {
-        return AuthState.INVALID;
+        return [AuthState.INVALID, null, null];
+    }
+
+    const isSame = await utils.verifyPassword(passphrase, user.passphrase);
+    if (!isSame) {
+        return [AuthState.INVALID, null, null];
     }
 
     if (!user.token) {
-        return AuthState.NEEDS_AUTH;
+        return [AuthState.NEEDS_AUTH, null, null];
     }
 
     const isTokenValid = await verifyToken(user.token);
     if (!isTokenValid) {
-        return AuthState.NEEDS_AUTH;
+        return [AuthState.NEEDS_AUTH, null, null];
     }
 
-    if (user.key) {
-        return user.key;
-    }
-
-    return AuthState.AUTHENTICATED;
+    return [AuthState.READY, user.id as string, user.isadmin as boolean];
 };
 
-const verifyAdmin = async (login: string, passphrase: string): Promise<boolean> => {
-    if (typeof passphrase !== 'string' || passphrase.length < 1 || typeof login !== 'string' || login.length < 1) {
-        return false
-    }
-
-    const filteredPass = utils.filterNonAlphanumeric(passphrase);
-    const filteredLogin = utils.filterNonAlphanumeric(login);
-    if (filteredPass !== passphrase || filteredLogin !== login) {
-        return false;
-    }
-
-    const user = await getUserByLogin(login, passphrase);
-    if (!user || !user.isadmin) {
-        return false;
-    }
-
-
-    return true;
-}
-
-const verifyUser = async (login: string): Promise<boolean> => {
-    if (typeof login !== 'string' || login.length < 1) {
-        return false;
-    }
-
-    const filteredLogin = utils.filterNonAlphanumeric(login);
-    if (filteredLogin !== login) {
-        return false;
-    }
-
-    const user = await getUserByOnlyLogin(login);
-    if (!user || user.isadmin) {
-        return false;
-    }
-
-    return true;
-}
-
-
 const verifyToken = async (token: string): Promise<boolean> => {
+    const SPOTIFY_RECENTLY_PLAYED_URL = 'https://api.spotify.com/v1/me/player/recently-played?limit=1';
     try {
-        const response = await fetch(`${SPOTIFY_API_URL}/me`, {
+        const response = await fetch(SPOTIFY_RECENTLY_PLAYED_URL, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
@@ -127,28 +83,22 @@ const verifyToken = async (token: string): Promise<boolean> => {
     }
 };
 
-enum KeyState {
-    VALID,
-    INVALID,
-    MISSING,
+type Session = {
+    id: string;
+    is_admin: boolean;
 }
 
-const verifyKey = async (key: string): Promise<KeyState> => {
-    if (!key || typeof key !== 'string') {
-        return KeyState.MISSING;
+const verifySession = (token: any): [boolean, Session | null] => {
+    if (!token) {
+        return [false, null];
     }
 
-    const filteredKey = utils.filterNonAlphanumeric(key);
-    if (filteredKey !== key) {
-        return KeyState.INVALID;
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET) as { id: string, is_admin: boolean };
+        return [true, { id: decoded.id, is_admin: decoded.is_admin }];
+    } catch (error) {
+        return [false, null];
     }
-
-    const user = await getUserByKey(key);
-    if (!user) {
-        return KeyState.INVALID;
-    }
-
-    return KeyState.VALID;
 }
 
 const authenticateSpotify = async (req: Request, res: Response, login: string) => {
@@ -157,13 +107,18 @@ const authenticateSpotify = async (req: Request, res: Response, login: string) =
         response_type: 'code',
         client_id: CLIENT_ID,
         scope: SCOPE,
-        redirect_uri: REDIRECT_URI,
+		redirect_uri: `${BACKEND_URL}/callback`,
         state: state,
     });
 
     REQUESTS.set(state, login);
     res.json({ redirect_uri: `${SPOTIFY_AUTH_URL}?${queryParams}` });
 };
+
+const createSession = (id: string, is_admin: boolean): string => {
+    const token = jwt.sign({ id, is_admin }, JWT_SECRET, { expiresIn: '3d' });
+    return token;
+}
 
 app.post('/login', async (req: Request, res: Response) => {
     const { login, passphrase } = req.body;
@@ -173,41 +128,72 @@ app.post('/login', async (req: Request, res: Response) => {
         return;
     }
 
-    const auth = await verifyLogin(login, passphrase);
-    if (typeof auth === 'string') {
-        res.json({ authenticated: true, key: auth });
-    }
-
+    const [auth, id, isadmin] = await verifyLogin(login, passphrase);
     switch (auth) {
-        case AuthState.AUTHENTICATED:
-            const key = utils.generateRandomKey(login, 64);
-            udpateUserKey(login, key);
-            res.json({ authenticated: true, key: key });
-            return;
         case AuthState.NEEDS_AUTH:
             await authenticateSpotify(req, res, login);
             return;
         case AuthState.INVALID:
             res.json({ authenticated: false, error: 'Invalid login or passphrase' });
             return;
+        case AuthState.READY:
+            const token = createSession(id!, isadmin!);
+            res.cookie('session', token, { httpOnly: true, secure: false, sameSite: 'strict', maxAge: 1000 * 60 * 60 * (24 * 3) });
+            res.json({ authenticated: true, is_admin: isadmin });
+            return;
     }
 });
 
-app.post('/verify', async (req: Request, res: Response) => {
-    const { key } = req.body;
+app.post('/logout', async (req: Request, res: Response) => {
+    res.clearCookie('session', { path: '/' });
+    res.status(200).json({ logged_out: true });
+});
 
-    const auth = await verifyKey(key);
-    switch (auth) {
-        case KeyState.VALID:
-            res.status(200).json({ authenticated: true });
-            return;
-        case KeyState.INVALID:
-            res.status(401).json({ error: 'Invalid key' });
-            return;
-        case KeyState.MISSING:
-            res.status(400).json({ error: 'Missing key' });
-            return;
+app.post('/register', async (req: Request, res: Response) => {
+    const { login, passphrase, superkey } = req.body;
+
+    if (!login || !passphrase || !superkey) {
+        res.json({ registered: false });
+        return;
     }
+
+    const user = await getUserByOnlyLogin(login);
+    if (user) {
+        res.json({ registered: false, error: 'User already exists' });
+        return;
+    }
+
+    const enable = await verifySuperkey(superkey);
+    if (!enable) {
+        res.json({ registered: false, error: 'Superkey is not enable' });
+        return;
+    }
+
+    const hashed = await utils.hashPassword(passphrase);
+    const id = await addAppUser(login, hashed)
+    if (!id) {
+        res.json({ registered: false, error: 'Internal server error' });
+        return;
+    }
+
+    const isDone = await useSuperkey(superkey);
+    if (!isDone) {
+        res.json({ registered: false, error: 'Internal server error' });
+        return;
+    }
+
+    res.json({ registered: true });
+})
+
+app.get('/verify', async (req: Request, res: Response) => {
+    const [is_auth, session] = verifySession(req.cookies.session);
+
+    if (!is_auth) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    res.json({ authenticated: true, is_admin: session?.is_admin });
 });
 
 app.get('/callback', async (req: Request, res: Response) => {
@@ -233,7 +219,7 @@ app.get('/callback', async (req: Request, res: Response) => {
             },
             body: querystring.stringify({
                 code: code as string,
-                redirect_uri: REDIRECT_URI,
+                redirect_uri: `${BACKEND_URL}/callback`,
                 grant_type: 'authorization_code'
             })
         });
@@ -245,71 +231,119 @@ app.get('/callback', async (req: Request, res: Response) => {
         const tokenData = await tokenResponse.json();
         const { refresh_token, access_token } = tokenData;
 
-        const userKey = utils.generateRandomKey(login, 64);
-        await updateUserToken(login, access_token, refresh_token);
-        await udpateUserKey(login, userKey);
+        const isDome = await updateUserToken(login, access_token, refresh_token);
+        if (!isDome) {
+            res.status(500).json({ error: 'Internal server error' });
+        }
 
-        res.redirect(`${FRONTEND_URL}?key=${userKey}`);
+        const user = await getUserByOnlyLogin(login);
+        if (!user) {
+            res.status(500).json({ error: 'Internal server error' });
+        }
+        const session = createSession(user.id, user.isadmin);
+
+        res.cookie('session', session, { httpOnly: true, secure: true, sameSite: 'strict', maxAge: 1000 * 60 * 60 * (24 * 3) });
+        res.redirect(FRONTEND_URL);
     } catch (error) {
         console.error('Error in callback:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-app.post('/users', async (req: Request, res: Response) => {
-    const { login, password } = req.body;
-    console.log('Getting all users');
+app.get('/users', async (req: Request, res: Response) => {
 
-    if (!login || !password) {
-        res.status(400).json({ error: 'Missing login or password' });
-        return;
-    }
-
-    const auth = await verifyAdmin(login, password);
-    if (!auth) {
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    // get all users login 
+    if (!session?.is_admin) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return
+    }
+
     const users = await getAllUsers();
+    if (!users) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
     res.json(users);
 });
 
-app.post('/delete-user', async (req: Request, res: Response) => {
-    const { login, password, userLogin } = req.body;
-    console.log(`Deleting user: ${userLogin}`);
-
-    if (!login || !password) {
-        res.json({ authenticated: false });
-        return;
-    }
-    const auth = await verifyAdmin(login, password);
-
-    if (!auth) {
+app.get('/superkeys', async (req: Request, res: Response) => {
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    const userAuth = await verifyUser(userLogin);
-    if (!userAuth) {
-        res.status(400).json({ error: 'Invalid user' });
+    if (!session?.is_admin) {
+        res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    // delete user
-    await deleteAppUser(userLogin);
+    const keys = await getAllSuperkeys();
+    if (!keys) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
+    res.json(keys);
+});
+
+
+app.post('/add-superkey', async (req: Request, res: Response) => {
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    const { superkey } = req.body;
+    if (!superkey || typeof superkey !== 'string' || superkey.length < 64) {
+        res.json({ added: false });
+        return;
+    }
+
+    const isDone = await insertSuperkey(superkey);
+    if (!isDone) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
+    res.json({ added: true });
+});
+
+app.delete('/delete-user/:login', async (req: Request, res: Response) => {
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    if (!session?.is_admin) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    const userLogin = req.params.login;
+    const isDone = await deleteAppUser(userLogin);
+    if (!isDone) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
     res.json({ deleted: true });
 });
 
 const verifyAddUser = async (userLogin: string, userPass: string): Promise<boolean> => {
     if (typeof userLogin !== 'string' || userLogin.length < 1 || typeof userPass !== 'string' || userPass.length < 1) {
-        return false;
-    }
-
-    const filteredLogin = utils.filterNonAlphanumeric(userLogin);
-    const filteredPass = utils.filterNonAlphanumeric(userPass);
-    if (filteredLogin !== userLogin || filteredPass !== userPass) {
         return false;
     }
 
@@ -322,16 +356,16 @@ const verifyAddUser = async (userLogin: string, userPass: string): Promise<boole
 }
 
 app.post('/add-user', async (req: Request, res: Response) => {
-    const { login, password, userLogin, userPassword} = req.body;
-    console.log(`Adding user: ${userLogin}`);
+    const { userLogin, userPassword } = req.body;
 
-    if (!login || !password) {
-        res.json({ authenticated: false });
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
+        res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    const auth = await verifyAdmin(login, password);
-    if (!auth) {
+    if (!session?.is_admin) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
     }
@@ -341,50 +375,134 @@ app.post('/add-user', async (req: Request, res: Response) => {
         res.status(400).json({ error: 'Invalid user' });
         return;
     }
-    await addAppUser(userLogin, userPassword);
+
+    const hashed = await utils.hashPassword(userPassword);
+    await addAppUser(userLogin, hashed);
     res.json({ added: true });
 });
 
+app.post('/change-user-password', async (req: Request, res: Response) => {
+    const { userLogin, userPassword } = req.body;
 
-
-const verifyDate = async (date: string) => {
-    // format yyyy-mm-dd
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!date.match(dateRegex)) {
-        return false;
-    }
-    return true;
-}
-
-app.post('/daily', async (req: Request, res: Response) => {
-    const { key, day } = req.body;
-    console.log(`Daily update for ${day}`);
-
-    if (!key || !day) {
-        console.log('Missing passphrase or day');
-        res.status(400).json({ error: 'Missing passphrase or day' });
-        return;
-    }
-
-    const auth = await verifyKey(key as string);
-    if (auth !== KeyState.VALID) {
-        console.log(`Unauthorized: ${auth}`);
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    if (!verifyDate(day as string)) {
-        console.log('Invalid date');
-        res.status(400).json({ error: 'Invalid date' });
+    if (!session?.is_admin) {
+        res.status(401).json({ error: 'Unauthorized' });
         return;
     }
 
-    const tracks = await getDailySummary(key as string, day as string);
-    res.json(tracks);
+    if (typeof userLogin !== 'string' || userLogin.length < 1 || typeof userPassword !== 'string' || userPassword.length < 1) {
+        res.status(400).json({ error: `Invalid user or Password` });
+        return;
+    }
+
+    const user = await getUserByOnlyLogin(userLogin);
+    if (!user) {
+        res.status(400).json({ error: `Invalid user, doesn't exist` });
+        return;
+    }
+
+    const hashed = await utils.hashPassword(userPassword);
+    const isDone = await udpateUserPassphrase(userLogin, hashed);
+
+    if (!isDone) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
+    res.json({ changed: true });
 });
+
+
+app.post('/change-password', async (req: Request, res: Response) => {
+    const { currentPassword, newPassword } = req.body;
+
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+    if (!is_auth) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    const user = await getUserById(session!.id);
+    if (!user) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
+    if (typeof currentPassword !== 'string' || currentPassword.length < 1 || typeof newPassword !== 'string' || currentPassword.length < 1) {
+        res.status(400).json({ error: 'Invalid password' });
+        return;
+    }
+
+    const isOk = await utils.verifyPassword(currentPassword, user.passphrase);
+    if (!isOk) {
+        res.status(400).json({ error: 'Invalid password' });
+        return;
+    }
+
+    const hashed = await utils.hashPassword(newPassword);
+    const isDone = await udpateUserPassphrase(user.login, hashed);
+
+    if (!isDone) {
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+    }
+
+    res.json({ changed: true });
+});
+
+
+
+app.post('/daily', async (req: Request, res: Response) => {
+    let { day } = req.body;
+    const token = req.cookies.session;
+    const [is_auth, session] = verifySession(token);
+
+    if (!is_auth || !day) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+
+    if (!utils.verifyDate(day as string)) {
+        res.status(400).json({ error: 'Invalid date' });
+        return;
+    }
+    day = day as string;
+
+    try {
+        const tracks = await getDailySummary(session!.id, day);
+        res.json(tracks);
+    } catch (error) {
+        res.status(500).json({ error: 'Error fetching daily summary:' });
+        return;
+    }
+});
+
+
+const createAdmin = async () => {
+    const user = await getUserByOnlyLogin(APP_USER_ADMIN);
+    if (user) {
+        return
+    }
+
+    const hashed = await utils.hashPassword(APP_USER_PASSPHRASE);
+    const id = await addAppUser(APP_USER_ADMIN, hashed, true);
+    if (!id) {
+        console.error('Failed to create admin');
+    }
+}
 
 const main = async () => {
     try {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        await createTables();
+        await createAdmin();
         app.listen(PORT, () => {
             console.log(`Server is running on ${PORT}`);
         });
