@@ -1,16 +1,16 @@
-const generateRandomString = (length: number): string => {
+export const generateRandomString = (length: number): string => {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   return Array.from({ length }, () => possible.charAt(Math.floor(Math.random() * possible.length))).join('');
 };
 
-const generateRandomKey = (login: string, length: number): string => {
+export const generateRandomKey = (login: string, length: number): string => {
   const randomString = generateRandomString(length);
   return `${login}${randomString}`;
 }
 
-const filterNonAlphanumeric = (str: string): string => str.replace(/[^a-zA-Z0-9]/g, '');
+export const filterNonAlphanumeric = (str: string): string => str.replace(/[^a-zA-Z0-9]/g, '');
 
-function msToHM(ms: number): string {
+export function msToHM(ms: number): string {
   const totalMinutes = Math.floor(ms / 1000 / 60);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -18,5 +18,3 @@ function msToHM(ms: number): string {
   // Return the formatted string "h m"
   return `${hours}h ${minutes}m`;
 }
-
-export { generateRandomString, filterNonAlphanumeric, msToHM, generateRandomKey };

@@ -3,8 +3,8 @@ import cors from 'cors';
 import querystring from 'querystring';
 import * as dotenv from 'dotenv';
 import * as utils from './utils';
-import { addAppUser, deleteAppUser, getAllUsers, getTracksListenedOnDate, getUserByKey, getUserByLogin, getUserByOnlyLogin, udpateUserKey, updateUserToken } from './db';
-import getDailySummary from './daily';
+import { addAppUser, deleteAppUser, getAllUsers, getUserByKey, getUserByLogin, getUserByOnlyLogin, udpateUserKey, updateUserToken } from './db';
+import { getDailySummary } from './daily';
 
 dotenv.config();
 const app = express();
@@ -24,7 +24,7 @@ console.log('ORIGIN:', FRONTEND_URL);
 
 const REQUESTS = new Map<string, string>();
 
-app.use(cors({ origin: FRONTEND_URL}));
+app.use(cors({ origin: FRONTEND_URL }));
 app.use(express.json());
 
 enum AuthState {
@@ -114,8 +114,9 @@ const verifyUser = async (login: string): Promise<boolean> => {
 
 
 const verifyToken = async (token: string): Promise<boolean> => {
+    const SPOTIFY_RECENTLY_PLAYED_URL = 'https://api.spotify.com/v1/me/player/recently-played?limit=1';
     try {
-        const response = await fetch(`${SPOTIFY_API_URL}/me`, {
+        const response = await fetch(SPOTIFY_RECENTLY_PLAYED_URL, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
@@ -322,7 +323,7 @@ const verifyAddUser = async (userLogin: string, userPass: string): Promise<boole
 }
 
 app.post('/add-user', async (req: Request, res: Response) => {
-    const { login, password, userLogin, userPassword} = req.body;
+    const { login, password, userLogin, userPassword } = req.body;
     console.log(`Adding user: ${userLogin}`);
 
     if (!login || !password) {

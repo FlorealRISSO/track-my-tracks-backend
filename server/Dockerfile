@@ -1,24 +1,20 @@
-# Use an official Node.js image as a base
+# Use a base image with Node.js
 FROM node:18-alpine
 
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json
+# Copy the useful files
 COPY package*.json ./
+COPY tsconfig.json ./
+COPY src ./src
 
-# Install dependencies
+# Install & Compile
 RUN npm install
+RUN npm run build
 
-# Copy the rest of the application files
-COPY . .
-
-# Build the TypeScript code
-RUN npx tsc
-
-# Expose the port on which your server runs (e.g., 3000)
+# Expose the app port (3000)
 EXPOSE 3000
 
-# Command to run the server
-CMD ["npx", "ts-node", "src/server.ts"]
-
+# Command to run the compiled app
+CMD ["npm", "run", "start"]

@@ -52,7 +52,7 @@ const fetchBy50 = async (query: string, ids: string[], token: string) => {
 }
 
 
-const getDailySummary = async (passphrase: string, day: string): Promise<DailySummary | undefined> => {
+export const getDailySummary = async (passphrase: string, day: string): Promise<DailySummary | undefined> => {
     const user = await getUserByKey(passphrase);
     if (!user) return;
 
@@ -179,5 +179,3 @@ const getTopGenres = (genreCount: Map<string, number>): { name: string; count: n
 
     return topGenres;
 };
-
-export default getDailySummary;

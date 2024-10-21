@@ -1,13 +1,17 @@
 version: '3.8'
 services:
   app:
+    depends_on:
+      - db
     build:
       context: ./server
       dockerfile: Dockerfile
     ports:
       - '3000:3000'
     volumes:
-      - './server:/usr/src/app'
+      - './server/src:/usr/src/app/src'
+      - './server/package.json:/usr/src/app/package.json'
+      - './server/tsconfig.json:/usr/src/app/tsconfig.json'
     environment:
       - DB_URL=postgres://admin:mypassword@db:5432/dev_db
       - CLIENT_ID=
@@ -28,6 +32,8 @@ services:
       - pgdata:/var/lib/postgresql/data  # Persist data in a named volume
 
   worker:
+    depends_on:
+      - db
     build:
       context: ./worker  # Set context to the worker directory
       dockerfile: Dockerfile  # Specify the Dockerfile for the worker if it's named differently

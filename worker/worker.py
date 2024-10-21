@@ -63,7 +63,7 @@ class ListenTrack:
 def fetch_recently_played(access_token) -> dict:
     headers = {'Authorization': f'Bearer {access_token}'}
     print(f"Fetching recently played tracks with token: {access_token}")
-    response = requests.get(SPOTIFY_RECENTLY_PLAYED_URL, headers=headers)
+    response = requests.get(SPOTIFY_RECENTLY_PLAYED_URL, headers=headers, timeout=10)
     
     if response.status_code == 200:
         data = response.json()
@@ -253,4 +253,5 @@ def main_test():
             print("\nPostgreSQL connection is closed.")
 
 if __name__ == "__main__":
+    time.sleep(10)
     main()
